@@ -116,168 +116,172 @@ class ObjectTree:
 		x_src_coords_hori, y_src_coords_hori, x_dest_coords_hori, \
 		y_dest_coords_hori = [], [], [], []
 
-		for src_idx, src_row in df.iterrows():
-			
-			# ================= vertical ======================= #
-			src_range_x = (src_row['xmin'], src_row['xmax'])
-			src_center_y = (src_row['ymin'] + src_row['ymax'])/2
+		#Calculate centers of both x and y coordinates
+		df['center_x'] = (df['xmin'] + df['xmax'])/2
+		df['center_y'] = (df['ymin'] + df['ymax'])/2
 
-			dest_attr_vert = []
+		#Set a multi-index on dataframe
+		df.set_index(['xmin', 'xmax', 'center_x', 'ymin', 'ymax', 'center_y'], append=True, inplace=True)
+
+		#Prepare masks to be used for fast indexing of objects
+		mask_xmin = df.index.get_level_values(1)
+		mask_xmax = df.index.get_level_values(2)
+		mask_center_x = df.index.get_level_values(3)
+		mask_ymin = df.index.get_level_values(4)
+		mask_ymax = df.index.get_level_values(5)
+		mask_center_y = df.index.get_level_values(6)
+
+		for src_idx, src_row in df.iterrows() :
+
+			#src_idx is a tuple composed of (idx, xmin, xmax, center_x, ymin, ymax, center_y)
+			src_idx_dict = {'xmin': src_idx[1], 'xmax': src_idx[2], 'center_x': src_idx[3], 'ymin': src_idx[4], 'ymax': src_idx[5], 'center_y': src_idx[6]}
+
+			# ================= vertical ======================= #
+			src_range_x = (src_idx_dict['xmin'], src_idx_dict['xmax'])
+			dest_attr_vert_sorted = []
 
 			# ================= horizontal ===================== #
-			src_range_y = (src_row['ymin'], src_row['ymax'])
-			src_center_x = (src_row['xmin'] + src_row['xmax'])/2
-			
-			dest_attr_hori = []
+			src_range_y = (src_idx_dict['ymin'], src_idx_dict['ymax'])
+			dest_attr_hori_sorted = []		
 
 			################ iterate over destination objects #################
-			for dest_idx, dest_row in df.iterrows():
-				# flag to signal whether the destination object is below source
-				is_beneath = False
-				if not src_idx == dest_idx:
-					# ==================== vertical ==========================#
-					dest_range_x = (dest_row['xmin'], dest_row['xmax'])
-					dest_center_y = (dest_row['ymin'] + dest_row['ymax'])/2
-					
-					height = dest_center_y - src_center_y
 
-					# consider only the cases where destination object lies 
-					# below source
-					if dest_center_y > src_center_y:
-						# check if horizontal range of dest lies within range 
-						# of source
+			########################### BENEATH OBJECTS ###########################
+			beneath_objects = df.loc[(mask_xmin <= src_range_x[1]) & (mask_xmax >= src_range_x[0]) & (mask_center_y > src_idx_dict['center_y'])]
 
-						# case 1
-						if dest_range_x[0] <= src_range_x[0] and \
-							dest_range_x[1] >= src_range_x[1]:
-							
-							x_common = (src_range_x[0] + src_range_x[1])/2
-							
-							line_src = (x_common , src_center_y)
-							line_dest = (x_common, dest_center_y)
+			if len(beneath_objects) > 0 :
 
-							attributes = (dest_idx, line_src, line_dest, height)
-							dest_attr_vert.append(attributes)
-							
-							is_beneath = True
+				#Sort beneath objects by y ascending and from left to right
+				beneath_objects_sorted = beneath_objects.sort_values(['center_y', 'center_x'], ascending=True, inplace=False)
+				beneath_objects_sorted['height'] = beneath_objects_sorted.index.get_level_values(6) - src_idx_dict['center_y']
+				beneath_objects_resorted = beneath_objects_sorted[beneath_objects_sorted['height'] > 0].sort_values(['height'], ascending=True, inplace=False)
 
-						# case 2
-						elif dest_range_x[0] >= src_range_x[0] and \
-							dest_range_x[1] <= src_range_x[1]:
-							
-							x_common = (dest_range_x[0] + dest_range_x[1])/2
-							
-							line_src = (x_common, src_center_y)
-							line_dest = (x_common, dest_center_y)
-							
-							attributes = (dest_idx, line_src, line_dest, height)
-							dest_attr_vert.append(attributes)
-							
-							is_beneath = True
+				if len(beneath_objects_resorted) > 0 :
+					#Initialize variables needed for the found destination object
+					dest_idx = beneath_objects_resorted.index.get_level_values(0)[0]
+					dest_range_x = (beneath_objects_resorted.index.get_level_values(1)[0], beneath_objects_resorted.index.get_level_values(2)[0])
+					dest_center_y = beneath_objects_resorted.index.get_level_values(6)[0]
+					height = dest_center_y - src_idx_dict['center_y']
 
-						# case 3
-						elif dest_range_x[0] <= src_range_x[0] and \
-							dest_range_x[1] >= src_range_x[0] and \
-								dest_range_x[1] < src_range_x[1]:
-
-							x_common = (src_range_x[0] + dest_range_x[1])/2
-
-							line_src = (x_common , src_center_y)
-							line_dest = (x_common, dest_center_y)
-
-							attributes = (dest_idx, line_src, line_dest, height)
-							dest_attr_vert.append(attributes)
-
-							is_beneath = True
-
-						# case 4
-						elif dest_range_x[0] <= src_range_x[1] and \
-							dest_range_x[1] >= src_range_x[1] and \
-								dest_range_x[0] > src_range_x[0]:
-							
-							x_common = (dest_range_x[0] + src_range_x[1])/2
-							
-							line_src = (x_common , src_center_y)
-							line_dest = (x_common, dest_center_y)
-
-							attributes = (dest_idx, line_src, line_dest, height)
-							dest_attr_vert.append(attributes)
-
-							is_beneath = True
-			
-				if not is_beneath:
-					# ======================= horizontal ==================== #
-						dest_range_y = (dest_row['ymin'], dest_row['ymax'])
-						# get center of destination NOTE: not used
-						dest_center_x = (dest_row['xmin'] + dest_row['xmax'])/2
+					# Calculation for lines and distances (Vertical)
+					# case 1
+					if dest_range_x[0] <= src_range_x[0] and \
+						dest_range_x[1] >= src_range_x[1]:
 						
-						# get length from destination center to source center
-						if dest_center_x > src_center_x:
-							length = dest_center_x - src_center_x
-						else:
-							length = 0
+						x_common = (src_range_x[0] + src_range_x[1])/2
 						
-						# consider only the cases where the destination object 
-						# lies to the right of source
-						if dest_center_x > src_center_x:
-							#check if vertical range of dest lies within range 
-							# of source
-							
-							# case 1
-							if dest_range_y[0] >= src_range_y[0] and \
-								dest_range_y[1] <= src_range_y[1]:
-								
-								y_common = (dest_range_y[0] + dest_range_y[1])/2
+						line_src = (x_common , src_idx_dict['center_y'])
+						line_dest = (x_common, dest_center_y)
 
-								line_src = (src_center_x, y_common)
-								line_dest = (dest_center_x, y_common)
-								
-								attributes = (dest_idx, line_src, line_dest, length)
-								dest_attr_hori.append(attributes)
+						attributes = (dest_idx, line_src, line_dest, height)
+						dest_attr_vert_sorted.append(attributes)
 
-							# case 2
-							if dest_range_y[0] <= src_range_y[0] and \
-								dest_range_y[1] <= src_range_y[1] and \
-									dest_range_y[1] > src_range_y[0]:
-								
-								y_common = (src_range_y[0] + dest_range_y[1])/2
+					# case 2
+					elif dest_range_x[0] >= src_range_x[0] and \
+						dest_range_x[1] <= src_range_x[1]:
+						
+						x_common = (dest_range_x[0] + dest_range_x[1])/2
+						
+						line_src = (x_common, src_idx_dict['center_y'])
+						line_dest = (x_common, dest_center_y)
+						
+						attributes = (dest_idx, line_src, line_dest, height)
+						dest_attr_vert_sorted.append(attributes)
 
-								line_src = (src_center_x, y_common)
-								line_dest = (dest_center_x, y_common)
+					# case 3
+					elif dest_range_x[0] <= src_range_x[0] and \
+						dest_range_x[1] >= src_range_x[0] and \
+							dest_range_x[1] < src_range_x[1]:
 
-								attributes = (dest_idx, line_src, line_dest, length)
-								dest_attr_hori.append(attributes)
+						x_common = (src_range_x[0] + dest_range_x[1])/2
 
-							# case 3
-							if dest_range_y[0] >= src_range_y[0] and \
-								dest_range_y[1] >= src_range_y[1] and \
-									dest_range_y[0] < src_range_y[1]:
+						line_src = (x_common , src_idx_dict['center_y'])
+						line_dest = (x_common, dest_center_y)
 
-								y_common = (dest_range_y[0] + src_range_y[1])/2
+						attributes = (dest_idx, line_src, line_dest, height)
+						dest_attr_vert_sorted.append(attributes)
 
-								line_src = (src_center_x, y_common)
-								line_dest = (dest_center_x, y_common)
+					# case 4
+					elif dest_range_x[0] <= src_range_x[1] and \
+						dest_range_x[1] >= src_range_x[1] and \
+							dest_range_x[0] > src_range_x[0]:
+						
+						x_common = (dest_range_x[0] + src_range_x[1])/2
+						
+						line_src = (x_common , src_idx_dict['center_y'])
+						line_dest = (x_common, dest_center_y)
 
-								attributes = (dest_idx, line_src, line_dest, length)
-								dest_attr_hori.append(attributes)
+						attributes = (dest_idx, line_src, line_dest, height)
+						dest_attr_vert_sorted.append(attributes)
 
-							# case 4
-							if dest_range_y[0] <= src_range_y[0] \
-								and dest_range_y[1] >= src_range_y[1]:
+			########################### SIDE OBJECTS ###########################
+			side_objects = df.loc[(mask_ymin <= src_range_y[1]) & (mask_ymax >= src_range_y[0]) & (mask_center_x > src_idx_dict['center_x'])]
 
-								y_common = (src_range_y[0] + src_range_y[1])/2
+			if len(side_objects) > 0 :
 
-								line_src = (src_center_x, y_common)
-								line_dest = (dest_center_x, y_common)
+				#Sort side objects by y ascending and from left to right
+				side_objects_sorted = side_objects.sort_values(['center_y', 'center_x'], ascending=True, inplace=False)
+				side_objects_sorted['length'] = side_objects_sorted.index.get_level_values(3) - src_idx_dict['center_x']
+				side_objects_resorted = side_objects_sorted[(side_objects_sorted['length'] > 0) & ((side_objects_sorted.index.get_level_values(1) > src_range_x[1]) | (side_objects_sorted.index.get_level_values(2) < src_range_x[0]) | (side_objects_sorted.index.get_level_values(6) <= src_idx_dict['center_y']))].sort_values(['length'], ascending=True, inplace=False)
 
-								attributes = (dest_idx, line_src, line_dest, length)
-								dest_attr_hori.append(attributes)
+				if len(side_objects_resorted) > 0 :
+					#Initialize variables needed for the found destination object
+					dest_idx = side_objects_resorted.index.get_level_values(0)[0]
+					dest_range_y = (side_objects_resorted.index.get_level_values(4)[0], side_objects_resorted.index.get_level_values(5)[0])
+					dest_center_x = side_objects_resorted.index.get_level_values(3)[0]
+					length = dest_center_x - src_idx_dict['center_x']
 
-			# sort list of destination attributes by height/length at position 
-			# 3 in tuple
-			dest_attr_vert_sorted = sorted(dest_attr_vert, key = lambda x: x[3])
-			dest_attr_hori_sorted = sorted(dest_attr_hori, key = lambda x: x[3])
-			
+					# Calculation for lines and distances (Vertical)
+					# case 1
+					if dest_range_y[0] >= src_range_y[0] and \
+						dest_range_y[1] <= src_range_y[1]:
+						
+						y_common = (dest_range_y[0] + dest_range_y[1])/2
+
+						line_src = (src_idx_dict['center_x'], y_common)
+						line_dest = (dest_center_x, y_common)
+						
+						attributes = (dest_idx, line_src, line_dest, length)
+						dest_attr_hori_sorted.append(attributes)
+
+					# case 2
+					if dest_range_y[0] <= src_range_y[0] and \
+						dest_range_y[1] <= src_range_y[1] and \
+							dest_range_y[1] > src_range_y[0]:
+						
+						y_common = (src_range_y[0] + dest_range_y[1])/2
+
+						line_src = (src_idx_dict['center_x'], y_common)
+						line_dest = (dest_center_x, y_common)
+
+						attributes = (dest_idx, line_src, line_dest, length)
+						dest_attr_hori_sorted.append(attributes)
+
+					# case 3
+					if dest_range_y[0] >= src_range_y[0] and \
+						dest_range_y[1] >= src_range_y[1] and \
+							dest_range_y[0] < src_range_y[1]:
+
+						y_common = (dest_range_y[0] + src_range_y[1])/2
+
+						line_src = (src_idx_dict['center_x'], y_common)
+						line_dest = (dest_center_x, y_common)
+
+						attributes = (dest_idx, line_src, line_dest, length)
+						dest_attr_hori_sorted.append(attributes)
+
+					# case 4
+					if dest_range_y[0] <= src_range_y[0] \
+						and dest_range_y[1] >= src_range_y[1]:
+
+						y_common = (src_range_y[0] + src_range_y[1])/2
+
+						line_src = (src_idx_dict['center_x'], y_common)
+						line_dest = (dest_center_x, y_common)
+
+						attributes = (dest_idx, line_src, line_dest, length)
+						dest_attr_hori_sorted.append(attributes)
+
 			# append the index and source and destination coords to draw line 
 			# ==================== vertical ================================= #
 			if len(dest_attr_vert_sorted) == 0:
@@ -335,7 +339,7 @@ class ObjectTree:
 				try:
 					lengths.append(dest_attr_hori_sorted[0][3])
 				except:
-					lengths.append(0)			
+					lengths.append(0)
 
 		# ==================== vertical ===================================== #
 		# create df for plotting lines
